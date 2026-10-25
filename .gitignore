@@ -1,0 +1,24 @@
+# 运行时产物
+__pycache__/
+*.py[cod]
+*.log
+logs/
+output/
+*.part
+
+# 本地配置与密钥（绝对不要提交）
+pixiv_通行密钥.json
+config.json
+settings.json
+.env
+.env.*
+
+# 截图/测试临时文件（保留 docs/ 下的安全截图）
+/preview*.png
+/_*.png
+/_test_*
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini

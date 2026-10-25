@@ -1,0 +1,6 @@
+requests>=2.28
+
+# 可选：Pillow 用于 LSB / Alpha 隐写元数据深扫
+# pillow>=10
+# 可选：pywebview 用于「一键登录」内置 Pixiv 登录窗口（Windows 需要 WebView2）
+# pywebview>=5

@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Pixiv 漫画采集是一个本机运行的小工具：填通行密钥后按标签或作品 ID 搜索相似画风，可筛选 R-18，并实时显示下载速度。">
+<title>Pixiv 漫画采集</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip-link" href="#workspace">跳到结果区</a>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="seal" aria-hidden="true">采</span>
+    <div class="brand-text">
+      <h1>Pixiv 漫画采集</h1>
+      <p>把喜欢的画风收进本地文件夹</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="account" id="account" data-state="offline">
+      <span class="account-label">账号</span>
+      <span class="account-name" id="accountName">未连接</span>
+    </div>
+    <button class="btn btn-quiet" id="networkBtn" type="button" title="线路测试与网络设置">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 14.5a10 10 0 0 1 14 0"/><path d="M6 11.5a6 6 0 0 1 8 0"/><path d="M9 8.5a2 2 0 0 1 2 0"/><circle cx="10" cy="14" r="1"/></svg>
+      线路测试
+    </button>
+    <button class="btn btn-quiet" id="openOutputTop" type="button" title="打开输出文件夹">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h3l1.6 2H15a2.5 2.5 0 0 1 2.5 2.5v5A2.5 2.5 0 0 1 15 16H5.5A2.5 2.5 0 0 1 3 13.5Z"/></svg>
+      输出文件夹
+    </button>
+  </div>
+</header>
+
+<main class="shell">
+  <aside class="rail" aria-label="抓取设置">
+    <section class="block" aria-labelledby="keyTitle">
+      <div class="block-head">
+        <h2 id="keyTitle">通行密钥</h2>
+        <span class="hint" id="keySource">读取中</span>
+      </div>
+      <div class="field">
+        <label for="tokenInput">Refresh token</label>
+        <div class="input-row">
+          <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="填入 Pixiv refresh_token">
+          <button class="icon-btn" id="toggleToken" type="button" aria-label="显示或隐藏密钥" title="显示或隐藏">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 10S5.5 4.8 10 4.8 17.5 10 17.5 10 14.5 15.2 10 15.2 2.5 10 2.5 10Z"/><circle cx="10" cy="10" r="2.6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="row-between">
+        <label class="check">
+          <input type="checkbox" id="rememberKey">
+          <span class="check-box" aria-hidden="true"></span>
+          <span>记住到本程序目录</span>
+        </label>
+        <button class="btn btn-primary" id="connectBtn" type="button">连接账号</button>
+      </div>
+      <div class="key-foot">
+        <p class="field-note" id="connectNote">密钥仅保存在本机，不会上传到任何第三方。</p>
+        <button class="btn btn-quiet btn-sm" id="extractKeyBtn" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="7" cy="10" r="3.5"/><path d="M10.5 10H17"/><path d="M14 10v2.5"/><path d="M16.5 10v2"/></svg>
+          提取通行密钥
+        </button>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="dirTitle">
+      <div class="block-head">
+        <h2 id="dirTitle">抓取方向</h2>
+      </div>
+      <div class="tabs" role="tablist" aria-label="抓取方向">
+        <button class="tab is-active" id="tabTag" role="tab" aria-selected="true" aria-controls="panelTag" type="button">按标签搜索</button>
+        <button class="tab" id="tabSimilar" role="tab" aria-selected="false" aria-controls="panelSimilar" type="button">按作品找相似</button>
+        <button class="tab" id="tabRelated" role="tab" aria-selected="false" aria-controls="panelSimilar" type="button">相关推荐</button>
+      </div>
+
+      <div class="tab-panel" id="panelTag" role="tabpanel" aria-labelledby="tabTag">
+        <div class="field">
+          <label for="tagInput">标签</label>
+          <div class="input-row">
+            <input id="tagInput" type="text" autocomplete="off" spellcheck="false" placeholder="输入标签后按回车，例如：厚塗り">
+          </div>
+          <div class="chips" id="tagChips" aria-live="polite"></div>
+          <div class="presets" id="tagPresets" aria-label="常用标签"></div>
+          <p class="field-note">多个标签为「与」关系；搜索目标为标签部分一致。</p>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panelSimilar" role="tabpanel" aria-labelledby="tabSimilar" hidden>
+        <div class="field">
+          <label for="idInput">作品 ID</label>
+          <textarea id="idInput" rows="3" spellcheck="false" placeholder="每行一个，或用逗号分隔：12345678, 87654321"></textarea>
+          <div class="chips" id="idChips" aria-live="polite"></div>
+          <p class="field-note" id="idNote">从 2 到 10 个作品里提取画风标签，再按标签相似度寻找同风格作品。</p>
+        </div>
+        <div class="seed-preview" id="seedPreview" hidden>
+          <div class="seed-preview-head">
+            <span>种子作品</span>
+            <span class="seed-preview-state" id="seedPreviewState">读取中…</span>
+          </div>
+          <div class="seed-grid" id="seedGrid"></div>
+        </div>
+        <div class="row-between compact" id="similarTagOptions">
+          <label class="check">
+            <input type="checkbox" id="includeRelated" checked>
+            <span class="check-box" aria-hidden="true"></span>
+            <span>包含 Pixiv 相关推荐</span>
+          </label>
+          <label class="field-inline" for="seedTagLimit">
+            <span>取标签数</span>
+            <select id="seedTagLimit">
+              <option value="4">4</option>
+              <option value="6" selected>6</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+            </select>
+          </label>
+        </div>
+        <div class="row-between compact" id="relatedOptions" hidden>
+          <label class="field-inline" for="relatedBatch">
+            <span>每批</span>
+            <select id="relatedBatch">
+              <option value="10">10 个</option>
+              <option value="20" selected>20 个</option>
+              <option value="30">30 个</option>
+              <option value="50">50 个</option>
+            </select>
+          </label>
+          <span class="hint">从种子相关推荐一层层往下，换批不重复</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="block scan-block" aria-labelledby="aiScanTitle">
+      <div class="block-head">
+        <h2 id="aiScanTitle">AI 元数据扫描</h2>
+        <label class="switch" title="开启即开始，关闭即停止">
+          <input type="checkbox" id="aiScanToggle">
+          <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+          <span class="sr-only">开启 AI 元数据扫描</span>
+        </label>
+      </div>
+      <p class="field-note">按当前方向和筛选持续收集 AI 作品，每批数量可选：直接下载，检查原图里是否残留生成参数；命中会标记并写入专用扫描文件夹。关闭开关才停止，扫描不按作品类型过滤。</p>
+      <div class="scan-batch-row">
+        <label class="field-inline" for="scanBatchSelect">
+          <span>每批</span>
+          <select id="scanBatchSelect">
+            <option value="5">5 个</option>
+            <option value="10" selected>10 个</option>
+            <option value="20">20 个</option>
+            <option value="30">30 个</option>
+            <option value="50">50 个</option>
+          </select>
+        </label>
+        <span class="hint">下载并检查</span>
+      </div>
+      <div class="scan-metrics" id="scanMetrics" hidden>
+        <div class="scan-metric"><span id="scanBatchValue">0</span><span>批</span></div>
+        <div class="scan-metric"><span id="scanDownloadValue">0</span><span>已下载</span></div>
+        <div class="scan-metric"><span id="scanHitValue">0</span><span>命中</span></div>
+        <div class="scan-metric"><span id="scanProgressValue">0/10</span><span>本批</span></div>
+      </div>
+      <div class="scan-block-foot">
+        <span class="scan-status" id="aiScanStatus" role="status" aria-live="polite">未开启</span>
+        <div class="scan-block-actions">
+          <button class="btn btn-quiet btn-sm" id="scanHistoryBtn" type="button">历史扫描</button>
+          <button class="btn btn-outline btn-sm" id="aiScanStopBtn" type="button" hidden>停止扫描</button>
+        </div>
+      </div>
+      <div class="scan-folder-row" id="scanFolderRow" hidden>
+        <button class="btn btn-quiet btn-sm" id="openScanFolderBtn" type="button">打开扫描文件夹</button>
+        <span class="hint" id="scanSessionHint"></span>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="optTitle">
+      <div class="block-head">
+        <h2 id="optTitle">筛选与下载</h2>
+      </div>
+
+      <div class="switch-row">
+        <div>
+          <span class="switch-label">包含 R-18</span>
+          <p class="field-note">仅在账号已开启 R-18 显示时有效。</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="r18Toggle">
+          <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+          <span class="sr-only">包含 R-18 内容</span>
+        </label>
+      </div>
+
+      <div class="field">
+        <span class="field-label" id="typeLabel">作品类型</span>
+        <div class="segment" role="radiogroup" aria-labelledby="typeLabel">
+          <label><input type="radio" name="workType" value="manga" checked><span>漫画</span></label>
+          <label><input type="radio" name="workType" value="illust"><span>插画</span></label>
+          <label><input type="radio" name="workType" value="all"><span>全部</span></label>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <label class="field" for="sortSelect">
+          <span class="field-label">排序</span>
+          <select id="sortSelect">
+            <option value="date" selected>最新发布</option>
+            <option value="popular">热门优先</option>
+          </select>
+        </label>
+        <label class="field" for="limitSelect">
+          <span class="field-label">数量上限</span>
+          <select id="limitSelect">
+            <option value="10">10 个</option>
+            <option value="20" selected>20 个</option>
+            <option value="30">30 个</option>
+            <option value="50">50 个</option>
+            <option value="100">100 个</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="two-col">
+        <label class="field" for="pagesSelect">
+          <span class="field-label">每作品页数</span>
+          <select id="pagesSelect">
+            <option value="0" selected>全部</option>
+            <option value="5">前 5 页</option>
+            <option value="10">前 10 页</option>
+            <option value="20">前 20 页</option>
+            <option value="50">前 50 页</option>
+          </select>
+        </label>
+        <label class="field" for="bookmarkInput">
+          <span class="field-label">最低收藏数</span>
+          <input id="bookmarkInput" type="number" min="0" step="100" value="0" inputmode="numeric">
+        </label>
+      </div>
+
+      <div class="field">
+        <div class="range-head">
+          <label class="field-label" for="concurrencyInput">下载并发</label>
+          <output id="concurrencyOut" for="concurrencyInput">4</output>
+        </div>
+        <input id="concurrencyInput" type="range" min="1" max="8" step="1" value="4">
+      </div>
+
+      <div class="stack-checks">
+        <label class="check">
+          <input type="checkbox" id="skipExisting" checked>
+          <span class="check-box" aria-hidden="true"></span>
+          <span>跳过已下载作品</span>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary btn-wide" id="scanBtn" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="m13.2 13.2 3.6 3.6"/></svg>
+          扫描匹配作品
+        </button>
+        <button class="btn btn-primary btn-wide" id="relatedStartBtn" type="button" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h7"/><path d="m8.5 6.5 3.5 3.5-3.5 3.5"/><path d="M14 5v10"/></svg>
+          按相关推荐往下搜
+        </button>
+        <button class="btn btn-outline btn-wide" id="relatedNextBtn" type="button" hidden>下一批（换一批）</button>
+        <p class="scan-state" id="scanState" role="status" aria-live="polite">先连接账号，再开始扫描。</p>
+      </div>
+    </section>
+  </aside>
+
+  <section class="workspace" id="workspace" aria-label="匹配结果">
+    <div class="ws-head">
+      <div class="ws-title">
+        <h2 id="wsTitle">匹配结果</h2>
+        <p id="resultSummary">还没有结果</p>
+      </div>
+      <div class="ws-tools">
+        <div class="seed-note" id="seedNote" hidden></div>
+        <label class="check" id="selectAllWrap" hidden>
+          <input type="checkbox" id="selectAll">
+          <span class="check-box" aria-hidden="true"></span>
+          <span id="selectAllLabel">全选</span>
+        </label>
+        <button class="btn btn-quiet" id="relatedNextTop" type="button" hidden>下一批</button>
+        <button class="btn btn-outline btn-sm" id="saveSearchBtn" type="button" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 3.5h8v13l-4-3-4 3Z"/></svg>
+          保存这次搜索
+        </button>
+      </div>
+    </div>
+
+    <div class="saved-row" id="savedRow" hidden>
+      <span class="saved-label">已保存的搜索</span>
+      <div class="chips" id="savedChips"></div>
+    </div>
+
+    <section class="scan-panel" id="scanPanel" hidden aria-label="AI 元数据扫描进度">
+      <div class="scan-panel-head">
+        <div>
+          <h2>AI 元数据扫描</h2>
+          <p id="scanPanelSummary">等待开始</p>
+        </div>
+        <button class="btn btn-quiet btn-sm" id="scanBackBtn" type="button" hidden>返回匹配结果</button>
+      </div>
+      <div class="scan-progress">
+        <div class="bar" aria-hidden="true"><span id="scanBarFill"></span></div>
+        <div class="scan-progress-meta">
+          <span id="scanProgressText">-</span>
+          <span id="scanSpeedText"></span>
+        </div>
+      </div>
+      <p class="scan-hit-hint" id="scanHitHint" hidden>命中作品已单独存放于扫描会话的「命中作品」文件夹；点卡片里的「展开暴露的数据」可立即查看原始内容。</p>
+      <div class="scan-hits" id="scanHits"></div>
+      <p class="scan-empty" id="scanHitsEmpty">还没有命中。被检查的作品若没有残留参数，不会出现在这里。</p>
+      <details class="log-wrap" id="scanLogWrap">
+        <summary>扫描日志</summary>
+        <pre id="scanLog"></pre>
+      </details>
+    </section>
+
+    <div class="empty" id="emptyState">
+      <p class="empty-kicker">采集流程</p>
+      <ol class="empty-steps">
+        <li><span class="step-no">1</span><span>填写通行密钥并连接账号</span></li>
+        <li><span class="step-no">2</span><span>选择方向：标签，或从作品 ID 提取画风</span></li>
+        <li><span class="step-no">3</span><span>扫描后勾选作品，开始下载</span></li>
+      </ol>
+      <p class="empty-tail">结果支持按 R-18、类型、收藏数过滤，下载速度会实时显示。</p>
+    </div>
+
+    <div class="grid" id="grid" hidden></div>
+
+    <div class="dock" id="dock" data-state="idle">
+      <div class="speed">
+        <div class="speed-main">
+          <span class="speed-value" id="speedValue">0.00</span>
+          <span class="speed-unit">MB/s</span>
+        </div>
+        <div class="speed-sub">
+          <span id="speedPages">0.0 页/秒</span>
+          <span id="speedWorks">0 / 0 作品</span>
+          <span id="speedEta">剩余时间未知</span>
+        </div>
+      </div>
+      <div class="spark-wrap">
+        <canvas id="spark" width="520" height="64" aria-label="下载速度曲线" role="img"></canvas>
+        <p class="spark-note" id="sparkNote">下载开始后显示速度曲线</p>
+      </div>
+      <div class="dock-progress">
+        <div class="bar" aria-hidden="true"><span id="barFill"></span></div>
+        <div class="dock-meta">
+          <span id="pageCounter">0 / 0 页</span>
+          <span id="byteCounter">0 B</span>
+        </div>
+      </div>
+      <div class="dock-actions">
+        <button class="btn btn-primary" id="downloadBtn" type="button" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9"/><path d="m6.2 8.6 3.8 3.8 3.8-3.8"/><path d="M4 15.5h12"/></svg>
+          下载所选
+        </button>
+        <button class="btn btn-outline" id="cancelBtn" type="button" hidden>停止</button>
+        <button class="btn btn-outline" id="retryFailedBtn" type="button" hidden>重试失败</button>
+        <button class="btn btn-quiet" id="openOutputBtn" type="button" hidden>打开文件夹</button>
+      </div>
+      <div class="dock-foot">
+        <div class="current" id="currentList" aria-live="polite"></div>
+        <details class="log-wrap" id="logWrap" hidden>
+          <summary>运行日志</summary>
+          <pre id="jobLog"></pre>
+        </details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<dialog class="key-dialog" id="keyDialog" aria-labelledby="keyDialogTitle">
+  <div class="key-dialog-inner">
+    <div class="key-dialog-head">
+      <h2 id="keyDialogTitle">提取通行密钥</h2>
+      <button class="icon-btn" id="keyDialogClose" type="button" aria-label="关闭提取窗口">×</button>
+    </div>
+    <p class="field-note">通行密钥就是 Pixiv 的 refresh_token。推荐用下面的一键登录；也可以手动粘贴授权码，或从本机已保存的工具缓存导入。</p>
+
+    <section class="key-dialog-section">
+      <h3>一键登录（推荐）</h3>
+      <p class="field-note">会打开程序内置的 Pixiv 登录窗口。登录完成（含验证码 / 2FA）后会自动抓取授权码并提取通行密钥，不需要按 F12，也不用手动复制。</p>
+      <div class="key-dialog-actions">
+        <button class="btn btn-primary" id="autoLoginBtn" type="button">打开登录窗口</button>
+        <span class="scan-status" id="autoLoginStatus" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="key-dialog-section">
+      <h3><span class="step-no">1</span>手动提取（备用）</h3>
+      <p class="field-note">打开授权页登录后，浏览器会尝试跳转 <code>pixiv://</code>。按 F12 打开开发者工具的 Network 面板，找到 <code>callback?…code=…</code> 或 <code>pixiv://…</code> 请求，复制整段 URL 或 code 填到下面。code 约 30 秒内有效。</p>
+      <div class="key-dialog-actions">
+        <button class="btn btn-primary btn-sm" id="extractOpenBtn" type="button">打开 Pixiv 登录页</button>
+        <button class="btn btn-outline btn-sm" id="extractPasteBtn" type="button">从剪贴板读取</button>
+        <a class="btn btn-quiet btn-sm" id="extractLoginLink" href="#" target="_blank" rel="noopener noreferrer" hidden>手动打开授权链接</a>
+      </div>
+      <label class="field" for="extractCode">
+        <span class="field-label">授权码 / 回调 URL</span>
+        <textarea id="extractCode" rows="2" spellcheck="false" placeholder="粘贴 code，或 pixiv://account/login?code=… 整段链接"></textarea>
+      </label>
+      <div class="key-dialog-actions key-dialog-actions-end">
+        <span class="scan-status" id="extractStatus" role="status" aria-live="polite"></span>
+        <button class="btn btn-primary" id="extractFinishBtn" type="button">提取通行密钥</button>
+      </div>
+    </section>
+
+    <section class="key-dialog-section">
+      <h3><span class="step-no">2</span>从本机工具导入</h3>
+      <p class="field-note">扫描本程序密钥文件、gppt、pixiv-token-getter、Ez2Lazer 等常见缓存位置；只读取已知路径，不会上传。</p>
+      <div class="key-source-list" id="keySourceList"></div>
+      <div class="key-dialog-actions">
+        <button class="btn btn-quiet btn-sm" id="refreshSourcesBtn" type="button">重新扫描</button>
+      </div>
+    </section>
+  </div>
+</dialog>
+
+<dialog class="key-dialog" id="settingsDialog" aria-labelledby="settingsTitle">
+  <div class="key-dialog-inner">
+    <div class="key-dialog-head">
+      <h2 id="settingsTitle">网络与设置</h2>
+      <button class="icon-btn" id="settingsClose" type="button" aria-label="关闭设置">×</button>
+    </div>
+    <p class="field-note">代理、测速和任务参数会保存到本程序目录的 <code>settings.json</code>，重启后仍然生效。</p>
+
+    <section class="key-dialog-section">
+      <h3>网络代理</h3>
+      <div class="two-col">
+        <label class="field" for="proxyMode">
+          <span class="field-label">代理模式</span>
+          <select id="proxyMode">
+            <option value="system">跟随系统 / 环境变量</option>
+            <option value="direct">直连（不使用代理）</option>
+            <option value="custom">自定义代理</option>
+          </select>
+        </label>
+        <label class="field" for="proxyUrl">
+          <span class="field-label">代理地址</span>
+          <input id="proxyUrl" type="text" spellcheck="false" placeholder="http://127.0.0.1:7890">
+        </label>
+      </div>
+      <div class="key-dialog-actions">
+        <button class="btn btn-outline btn-sm" id="runSpeedtestBtn" type="button">测试线路</button>
+        <span class="scan-status" id="speedtestStatus" role="status" aria-live="polite"></span>
+      </div>
+      <div class="speed-results" id="speedResults" hidden></div>
+    </section>
+
+    <section class="key-dialog-section">
+      <h3>下载</h3>
+      <div class="two-col">
+        <label class="field" for="downloadTimeout">
+          <span class="field-label">单请求超时（秒）</span>
+          <input id="downloadTimeout" type="number" min="5" max="180" step="1" value="25">
+        </label>
+        <label class="field" for="apiInterval">
+          <span class="field-label">API 最小间隔（秒）</span>
+          <input id="apiInterval" type="number" min="0" max="5" step="0.05" value="0.35">
+        </label>
+      </div>
+      <p class="field-note">下载支持 .part 断点续传；失败页会保留临时文件，重试时继续下载。</p>
+    </section>
+
+    <section class="key-dialog-section">
+      <h3>AI 扫描</h3>
+      <div class="two-col">
+        <label class="field" for="defaultBatch">
+          <span class="field-label">默认每批数量</span>
+          <select id="defaultBatch">
+            <option value="5">5 个</option>
+            <option value="10">10 个</option>
+            <option value="20">20 个</option>
+            <option value="30">30 个</option>
+            <option value="50">50 个</option>
+          </select>
+        </label>
+        <label class="field" for="maxBatches">
+          <span class="field-label">最大批次（0 不限）</span>
+          <input id="maxBatches" type="number" min="0" max="1000" step="1" value="0">
+        </label>
+      </div>
+      <div class="two-col">
+        <label class="field" for="maxDisk">
+          <span class="field-label">最大磁盘占用 GB（0 不限）</span>
+          <input id="maxDisk" type="number" min="0" max="1000" step="0.5" value="0">
+        </label>
+        <label class="check" for="notifyHits">
+          <input type="checkbox" id="notifyHits" checked>
+          <span class="check-box" aria-hidden="true"></span>
+          <span>命中时发浏览器通知</span>
+        </label>
+      </div>
+      <div class="key-dialog-actions">
+        <button class="btn btn-primary" id="saveSettingsBtn" type="button">保存设置</button>
+        <span class="scan-status" id="settingsStatus" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+  </div>
+</dialog>
+
+<dialog class="key-dialog" id="historyDialog" aria-labelledby="historyTitle">
+  <div class="key-dialog-inner">
+    <div class="key-dialog-head">
+      <h2 id="historyTitle">历史扫描</h2>
+      <button class="icon-btn" id="historyClose" type="button" aria-label="关闭历史扫描">×</button>
+    </div>
+    <div id="historySessions" class="history-sessions"></div>
+    <div id="historyDetail" hidden>
+      <div class="key-dialog-actions">
+        <button class="btn btn-quiet btn-sm" id="historyBackBtn" type="button">返回会话列表</button>
+        <span class="scan-status" id="historySummary"></span>
+      </div>
+      <div class="history-filters">
+        <input id="historySearch" type="text" spellcheck="false" placeholder="搜索标题、ID、字段、证据">
+        <select id="historyLevel">
+          <option value="">全部等级</option>
+          <option value="高">高</option>
+          <option value="中">中</option>
+        </select>
+      </div>
+      <div class="key-dialog-actions">
+        <button class="btn btn-quiet btn-sm" id="historyExportCsv" type="button">导出 CSV</button>
+        <button class="btn btn-quiet btn-sm" id="historyExportJson" type="button">导出 JSON</button>
+        <button class="btn btn-quiet btn-sm" id="historyOpenFolder" type="button">打开文件夹</button>
+      </div>
+      <div class="scan-hits" id="historyHits"></div>
+      <p class="scan-empty" id="historyEmpty">还没有加载命中作品。</p>
+      <div class="key-dialog-actions">
+        <button class="btn btn-outline btn-sm" id="historyMore" type="button" hidden>加载更多</button>
+        <span class="hint" id="historyCount"></span>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<div class="card-menu" id="cardMenu" role="menu" hidden></div>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

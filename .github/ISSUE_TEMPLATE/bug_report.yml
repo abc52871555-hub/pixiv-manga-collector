@@ -1,0 +1,49 @@
+name: Bug report
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认没有粘贴 refresh_token、密钥文件、代理密码或完整私人日志。
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / commit
+      placeholder: 例如 v1.0.0 或 commit hash
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: 系统
+      placeholder: Windows 11 / Python 3.14 / 浏览器版本
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: 1. ... 2. ... 3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为 / 报错
+    validations:
+      required: true
+  - type: checkboxes
+    id: safe
+    attributes:
+      label: 确认
+      options:
+        - label: 我没有粘贴密钥、token、私人作品或完整私人日志
+          required: true
