@@ -3960,8 +3960,346 @@ def api_output_stats():
 
 
 # ---------------------------------------------------------------------------
-# HTTP 服务
+# 下载库：扫描 output 下的作品目录，提供筛选 / 分类 / 查看
 # ---------------------------------------------------------------------------
+
+LIBRARY_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
+_library_lock = threading.RLock()
+_library_cache = {"at": 0.0, "items": [], "facets": {}}
+_library_thumb_lock = threading.RLock()
+_library_thumbs = OrderedDict()
+_library_thumb_bytes = 0
+LIBRARY_THUMB_MAX_ITEMS = 120
+LIBRARY_THUMB_MAX_BYTES = 60 * 1024 * 1024
+
+
+def _library_tags(value):
+    names = []
+    if isinstance(value, list):
+        for tag in value:
+            if isinstance(tag, dict):
+                name = str(tag.get("name") or "").strip()
+            else:
+                name = str(tag or "").strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+def _library_exposure(record):
+    exposure = record.get("exposure") if isinstance(record, dict) else None
+    if not isinstance(exposure, dict):
+        return {}
+    return {
+        "level": exposure.get("level") or "",
+        "summary": exposure.get("summary") or "",
+        "field_count": _int(exposure.get("field_count"), 0),
+    }
+
+
+def _library_source(rel_parts):
+    if not rel_parts or rel_parts[0] != "AI元数据扫描":
+        return "download", "", ""
+    session = rel_parts[1] if len(rel_parts) > 1 else ""
+    if len(rel_parts) > 2 and rel_parts[2] == "命中作品":
+        return "hit", session, ""
+    if len(rel_parts) > 2 and str(rel_parts[2]).startswith("batch_"):
+        return "scan", session, rel_parts[2]
+    return "scan", session, ""
+
+
+def _library_images(work_dir, work_id, files):
+    images = []
+    for name in files:
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in LIBRARY_IMAGE_EXTS:
+            continue
+        if name.startswith("."):
+            continue
+        images.append(name)
+
+    def page_key(name):
+        m = re.search(r"_p(\d+)", name, re.I)
+        return (int(m.group(1)) if m else 9999, name.lower())
+
+    images.sort(key=page_key)
+    result = []
+    for index, name in enumerate(images):
+        rel = os.path.relpath(os.path.join(work_dir, name), STATE.output_dir).replace("\\", "/")
+        quoted = urllib.parse.quote(rel, safe="")
+        result.append({
+            "page": index,
+            "name": name,
+            "url": f"/api/library/file?path={quoted}",
+            "thumb": f"/api/library/file?path={quoted}&amp;thumb=1".replace("&amp;", "&"),
+        })
+    return result
+
+
+def _library_scan(force=False):
+    now = time.time()
+    with _library_lock:
+        if not force and _library_cache["items"] and now - _library_cache["at"] < 8:
+            return _library_cache["items"], _library_cache["facets"]
+
+    items = []
+    facets = {
+        "sources": {}, "types": {}, "sessions": {}, "tags": {}, "authors": {},
+        "r18": {"yes": 0, "no": 0}, "hit": {"yes": 0, "no": 0},
+    }
+    root = os.path.abspath(STATE.output_dir)
+    if os.path.isdir(root):
+        for current, dirs, files in os.walk(root):
+            rel_dir = os.path.relpath(current, root)
+            rel_parts = [] if rel_dir == "." else rel_dir.replace("\\", "/").split("/")
+            # 不进入隐藏目录/缩略图缓存
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            if "info.json" not in files:
+                continue
+            dirs[:] = []
+            info = {}
+            try:
+                with open(os.path.join(current, "info.json"), encoding="utf-8") as handle:
+                    info = json.load(handle)
+            except (OSError, ValueError):
+                info = {}
+            if not isinstance(info, dict):
+                info = {}
+            work_id = _int(info.get("id"), 0)
+            if work_id <= 0:
+                m = re.match(r"(\d{4,12})_", os.path.basename(current))
+                work_id = int(m.group(1)) if m else 0
+            if work_id <= 0:
+                continue
+
+            source, session, batch = _library_source(rel_parts)
+            meta_path = os.path.join(current, "metadata_scan.json")
+            meta = {}
+            if os.path.isfile(meta_path):
+                try:
+                    with open(meta_path, encoding="utf-8") as handle:
+                        meta = json.load(handle)
+                except (OSError, ValueError):
+                    meta = {}
+            if not isinstance(meta, dict):
+                meta = {}
+            is_hit = source == "hit" or bool(meta.get("has_metadata"))
+            if is_hit:
+                source = "hit"
+            exposure = _library_exposure(meta)
+            tags = _library_tags(info.get("tags")) or _library_tags(meta.get("tags"))
+            author = info.get("author") if isinstance(info.get("author"), dict) else {}
+            if not author:
+                author = meta.get("author") if isinstance(meta.get("author"), dict) else {}
+            images = _library_images(current, work_id, files)
+            if not images:
+                continue
+            downloaded_at = str(info.get("downloaded_at") or meta.get("checked_at") or "")
+            if not downloaded_at:
+                try:
+                    downloaded_at = time.strftime(
+                        "%Y-%m-%dT%H:%M:%S", time.localtime(os.path.getmtime(current))
+                    )
+                except OSError:
+                    downloaded_at = ""
+            total_bytes = 0
+            for image in images:
+                try:
+                    total_bytes += os.path.getsize(
+                        os.path.join(current, image["name"])
+                    )
+                except OSError:
+                    pass
+            item = {
+                "id": work_id,
+                "title": str(info.get("title") or meta.get("title") or f"作品 {work_id}"),
+                "type": str(info.get("type") or meta.get("type") or "illust"),
+                "page_count": max(1, len(images)),
+                "declared_page_count": _int(info.get("page_count"), 0),
+                "x_restrict": _int(info.get("x_restrict"), 0),
+                "bookmarks": _int(info.get("total_bookmarks"), 0),
+                "tags": tags,
+                "author": {
+                    "id": _int(author.get("id"), 0),
+                    "name": str(author.get("name") or ""),
+                    "account": str(author.get("account") or ""),
+                },
+                "create_date": str(info.get("create_date") or ""),
+                "downloaded_at": downloaded_at,
+                "source": source,
+                "session": session,
+                "batch": batch,
+                "hit": is_hit,
+                "exposure": exposure,
+                "field_count": _int(exposure.get("field_count"), 0),
+                "dir": rel_dir.replace("\\", "/"),
+                "images": images,
+                "cover": images[0]["thumb"],
+                "bytes": total_bytes,
+            }
+            items.append(item)
+            # 统计 facets
+            facets["sources"][source] = facets["sources"].get(source, 0) + 1
+            facets["types"][item["type"]] = facets["types"].get(item["type"], 0) + 1
+            if session:
+                facets["sessions"][session] = facets["sessions"].get(session, 0) + 1
+            facets["r18"]["yes" if item["x_restrict"] > 0 else "no"] += 1
+            facets["hit"]["yes" if is_hit else "no"] += 1
+            for tag in tags:
+                facets["tags"][tag] = facets["tags"].get(tag, 0) + 1
+            author_name = item["author"]["name"] or "未知作者"
+            facets["authors"][author_name] = facets["authors"].get(author_name, 0) + 1
+
+    items.sort(key=lambda item: (item.get("downloaded_at") or "", item["id"]), reverse=True)
+    for key in ("tags", "authors"):
+        ordered = sorted(facets[key].items(), key=lambda pair: (-pair[1], pair[0]))
+        facets[key] = [{"name": name, "count": count} for name, count in ordered[:60]]
+    with _library_lock:
+        _library_cache["at"] = now
+        _library_cache["items"] = items
+        _library_cache["facets"] = facets
+    return items, facets
+
+
+def api_library(query):
+    items, facets = _library_scan(force=_bool((query.get("refresh") or ["0"])[0], False))
+    q = str((query.get("q") or [""])[0] or "").strip().lower()
+    source = str((query.get("source") or [""])[0] or "").strip().lower()
+    work_type = str((query.get("type") or [""])[0] or "").strip().lower()
+    r18 = str((query.get("r18") or [""])[0] or "").strip().lower()
+    hit = str((query.get("hit") or [""])[0] or "").strip().lower()
+    tag = str((query.get("tag") or [""])[0] or "").strip().lower()
+    author = str((query.get("author") or [""])[0] or "").strip().lower()
+    session = str((query.get("session") or [""])[0] or "").strip()
+    sort = str((query.get("sort") or ["newest"])[0] or "newest").strip().lower()
+    offset = _clamp_int((query.get("offset") or ["0"])[0], 0, 100000, 0)
+    limit = _clamp_int((query.get("limit") or ["60"])[0], 1, 200, 60)
+
+    filtered = []
+    for item in items:
+        if q:
+            blob = " ".join([
+                item["title"], str(item["id"]), " ".join(item["tags"]),
+                item["author"]["name"], item["author"]["account"],
+            ]).lower()
+            if q not in blob:
+                continue
+        if source and source != "all" and item["source"] != source:
+            continue
+        if work_type and work_type != "all" and item["type"] != work_type:
+            continue
+        if r18 == "yes" and item["x_restrict"] <= 0:
+            continue
+        if r18 == "no" and item["x_restrict"] > 0:
+            continue
+        if hit == "yes" and not item["hit"]:
+            continue
+        if hit == "no" and item["hit"]:
+            continue
+        if tag and not any(tag == t.lower() for t in item["tags"]):
+            continue
+        if author and author not in item["author"]["name"].lower():
+            continue
+        if session and item["session"] != session:
+            continue
+        filtered.append(item)
+
+    if sort == "oldest":
+        filtered.sort(key=lambda item: (item.get("downloaded_at") or "", item["id"]))
+    elif sort == "title":
+        filtered.sort(key=lambda item: (item["title"].lower(), item["id"]))
+    elif sort == "pages":
+        filtered.sort(key=lambda item: (-item["page_count"], item["id"]))
+    elif sort == "bookmarks":
+        filtered.sort(key=lambda item: (-item["bookmarks"], item["id"]))
+    elif sort == "size":
+        filtered.sort(key=lambda item: (-item["bytes"], item["id"]))
+    else:
+        filtered.sort(key=lambda item: (item.get("downloaded_at") or "", item["id"]), reverse=True)
+
+    total = len(filtered)
+    page = filtered[offset:offset + limit]
+    return {
+        "ok": True,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": page,
+        "facets": facets,
+        "output_dir": STATE.output_dir,
+        "scanned_at": int(time.time()),
+    }
+
+
+def _resolve_library_path(rel_path):
+    rel_path = str(rel_path or "").replace("\\", "/").strip()
+    if not rel_path or rel_path.startswith("/") or ".." in rel_path.split("/"):
+        raise PixivError("非法的文件路径", 400)
+    root = os.path.abspath(STATE.output_dir)
+    target = os.path.abspath(os.path.join(root, rel_path))
+    if not (target == root or target.lower().startswith(root.lower() + os.sep)):
+        raise PixivError("非法的文件路径", 400)
+    if not os.path.isfile(target):
+        raise PixivError("文件不存在", 404)
+    if os.path.splitext(target)[1].lower() not in LIBRARY_IMAGE_EXTS:
+        raise PixivError("只允许读取图片文件", 400)
+    return target
+
+
+def _library_thumb(target):
+    key = (target, os.path.getmtime(target), os.path.getsize(target))
+    with _library_thumb_lock:
+        if key in _library_thumbs:
+            data, content_type = _library_thumbs.pop(key)
+            _library_thumbs[key] = (data, content_type)
+            return data, content_type
+    try:
+        from PIL import Image  # noqa: PLC0415 - 可选依赖
+    except Exception:  # noqa: BLE001
+        with open(target, "rb") as handle:
+            return handle.read(), MIME_TYPES.get(os.path.splitext(target)[1].lower(), "image/jpeg")
+    try:
+        with Image.open(target) as image:
+            image.seek(0)
+            if image.mode in ("RGBA", "LA", "P"):
+                image = image.convert("RGBA")
+                background = Image.new("RGB", image.size, (246, 242, 233))
+                background.paste(image, mask=image.split()[-1])
+                image = background
+            else:
+                image = image.convert("RGB")
+            image.thumbnail((520, 520), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=84, optimize=True)
+            data = output.getvalue()
+    except Exception:  # noqa: BLE001
+        with open(target, "rb") as handle:
+            return handle.read(), MIME_TYPES.get(os.path.splitext(target)[1].lower(), "image/jpeg")
+    content_type = "image/jpeg"
+    with _library_thumb_lock:
+        global _library_thumb_bytes
+        _library_thumbs[key] = (data, content_type)
+        _library_thumb_bytes += len(data)
+        while _library_thumbs and (
+            len(_library_thumbs) > LIBRARY_THUMB_MAX_ITEMS
+            or _library_thumb_bytes > LIBRARY_THUMB_MAX_BYTES
+        ):
+            _old_key, (old_data, _old_type) = _library_thumbs.popitem(last=False)
+            _library_thumb_bytes -= len(old_data)
+    return data, content_type
+
+
+def api_library_file(rel_path, thumb=False):
+    target = _resolve_library_path(rel_path)
+    if thumb:
+        data, content_type = _library_thumb(target)
+        return data, content_type
+    ext = os.path.splitext(target)[1].lower()
+    content_type = MIME_TYPES.get(ext) or mimetypes.guess_type(target)[0] or "application/octet-stream"
+    with open(target, "rb") as handle:
+        return handle.read(), content_type
+
+
 
 class ApiError(Exception):
     def __init__(self, status, message):
@@ -4005,7 +4343,7 @@ class Handler(BaseHTTPRequestHandler):
         allowed_origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
         if origin and origin not in allowed_origins:
             raise ApiError(403, "非法的来源")
-        if path in ("/api/config", "/api/thumb"):
+        if path in ("/api/config", "/api/thumb", "/api/library/file"):
             return
         token = self.headers.get("X-API-Token") or ""
         if not secrets.compare_digest(token, STATE.api_token):
@@ -4119,6 +4457,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/output":
             self._send_json(api_output_stats())
+            return
+        if path == "/api/library":
+            self._send_json(api_library(query))
+            return
+        if path == "/api/library/file":
+            rel_path = (query.get("path") or [""])[0]
+            thumb = _bool((query.get("thumb") or ["0"])[0], False)
+            try:
+                body, content_type = api_library_file(rel_path, thumb=thumb)
+            except PixivError as exc:
+                raise ApiError(404 if exc.status in (404, 502, 500) else 400, exc.message) from exc
+            self._send_bytes(body, content_type, cache="public, max-age=3600")
             return
         if path == "/api/settings":
             self._send_json(api_get_settings())

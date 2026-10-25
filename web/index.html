@@ -7,6 +7,7 @@
 <title>Pixiv 漫画采集</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/library.css">
 </head>
 <body>
 <a class="skip-link" href="#workspace">跳到结果区</a>
@@ -24,6 +25,10 @@
       <span class="account-label">账号</span>
       <span class="account-name" id="accountName">未连接</span>
     </div>
+    <button class="btn btn-quiet" id="libraryBtn" type="button" title="查看已下载的图片">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="6" height="7" rx="1"/><rect x="11" y="4" width="6" height="7" rx="1"/><rect x="3" y="13" width="6" height="3" rx="1"/><rect x="11" y="13" width="6" height="3" rx="1"/></svg>
+      下载库
+    </button>
     <button class="btn btn-quiet" id="networkBtn" type="button" title="线路测试与网络设置">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 14.5a10 10 0 0 1 14 0"/><path d="M6 11.5a6 6 0 0 1 8 0"/><path d="M9 8.5a2 2 0 0 1 2 0"/><circle cx="10" cy="14" r="1"/></svg>
       线路测试
@@ -421,6 +426,96 @@
         <button class="btn btn-quiet btn-sm" id="refreshSourcesBtn" type="button">重新扫描</button>
       </div>
     </section>
+  </div>
+</dialog>
+
+<dialog class="key-dialog library-dialog" id="libraryDialog" aria-labelledby="libraryTitle">
+  <div class="key-dialog-inner library-inner">
+    <div class="key-dialog-head">
+      <h2 id="libraryTitle">下载库</h2>
+      <button class="icon-btn" id="libraryClose" type="button" aria-label="关闭下载库">×</button>
+    </div>
+    <p class="field-note">这里汇总已经下载到本机的作品，可以按来源、标签、作者、R-18、命中情况筛选，也可以按作者、标签、月份等分组查看。</p>
+
+    <div class="library-toolbar">
+      <input id="libSearch" type="search" autocomplete="off" spellcheck="false" placeholder="搜索标题 / ID / 标签 / 作者">
+      <select id="libSource" aria-label="来源">
+        <option value="all">全部来源</option>
+        <option value="download">普通下载</option>
+        <option value="scan">AI 扫描</option>
+        <option value="hit">命中隔离</option>
+      </select>
+      <select id="libType" aria-label="作品类型">
+        <option value="all">全部类型</option>
+        <option value="manga">漫画</option>
+        <option value="illust">插画</option>
+      </select>
+      <select id="libR18" aria-label="R-18">
+        <option value="all">R-18 全部</option>
+        <option value="no">隐藏 R-18</option>
+        <option value="yes">只看 R-18</option>
+      </select>
+      <select id="libHit" aria-label="元数据命中">
+        <option value="all">命中全部</option>
+        <option value="yes">只看命中</option>
+        <option value="no">只看未命中</option>
+      </select>
+      <select id="libTag" aria-label="标签"><option value="">全部标签</option></select>
+      <select id="libAuthor" aria-label="作者"><option value="">全部作者</option></select>
+      <select id="libSession" aria-label="扫描会话"><option value="">全部会话</option></select>
+      <select id="libSort" aria-label="排序">
+        <option value="newest">最近下载</option>
+        <option value="oldest">最早下载</option>
+        <option value="title">标题</option>
+        <option value="pages">页数</option>
+        <option value="bookmarks">收藏数</option>
+        <option value="size">文件大小</option>
+      </select>
+      <select id="libGroup" aria-label="分类/分组">
+        <option value="none">不分组</option>
+        <option value="author">按作者</option>
+        <option value="tag">按标签</option>
+        <option value="month">按月份</option>
+        <option value="source">按来源</option>
+        <option value="hit">按命中情况</option>
+        <option value="type">按类型</option>
+      </select>
+      <button class="btn btn-quiet btn-sm" id="libRefresh" type="button">刷新</button>
+    </div>
+
+    <div class="library-meta-row">
+      <span id="libSummary">读取中…</span>
+      <span class="hint" id="libStats"></span>
+    </div>
+
+    <div class="library-groups" id="libGroups"></div>
+    <p class="library-empty" id="libEmpty" hidden>下载库里还没有作品，先去抓取并下载一些吧。</p>
+    <div class="library-foot">
+      <button class="btn btn-outline btn-sm" id="libMore" type="button" hidden>加载更多</button>
+      <span class="hint">图片来自本机 output 目录</span>
+    </div>
+
+    <div class="library-viewer" id="libViewer" hidden>
+      <div class="library-viewer-head">
+        <div>
+          <h3 id="libViewerTitle"></h3>
+          <p class="hint" id="libViewerMeta"></p>
+        </div>
+        <button class="icon-btn" id="libViewerClose" type="button" aria-label="关闭查看器">×</button>
+      </div>
+      <div class="library-viewer-stage">
+        <button class="library-viewer-arrow" id="libViewerPrev" type="button" aria-label="上一页">‹</button>
+        <img id="libViewerImg" alt="">
+        <button class="library-viewer-arrow" id="libViewerNext" type="button" aria-label="下一页">›</button>
+      </div>
+      <div class="library-viewer-pages" id="libViewerThumbs"></div>
+      <div class="library-viewer-actions">
+        <button class="btn btn-quiet btn-sm" id="libViewerFolder" type="button">打开作品文件夹</button>
+        <button class="btn btn-quiet btn-sm" id="libViewerPixiv" type="button">在 Pixiv 打开</button>
+        <span class="hint" id="libViewerCounter"></span>
+        <span class="hint" id="libViewerTags"></span>
+      </div>
+    </div>
   </div>
 </dialog>
 

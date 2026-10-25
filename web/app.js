@@ -27,6 +27,37 @@
     extractKeyBtn: $('#extractKeyBtn'),
     autoLoginBtn: $('#autoLoginBtn'),
     autoLoginStatus: $('#autoLoginStatus'),
+    libraryBtn: $('#libraryBtn'),
+    libraryDialog: $('#libraryDialog'),
+    libraryClose: $('#libraryClose'),
+    libSearch: $('#libSearch'),
+    libSource: $('#libSource'),
+    libType: $('#libType'),
+    libR18: $('#libR18'),
+    libHit: $('#libHit'),
+    libTag: $('#libTag'),
+    libAuthor: $('#libAuthor'),
+    libSession: $('#libSession'),
+    libSort: $('#libSort'),
+    libGroup: $('#libGroup'),
+    libRefresh: $('#libRefresh'),
+    libSummary: $('#libSummary'),
+    libStats: $('#libStats'),
+    libGroups: $('#libGroups'),
+    libEmpty: $('#libEmpty'),
+    libMore: $('#libMore'),
+    libViewer: $('#libViewer'),
+    libViewerTitle: $('#libViewerTitle'),
+    libViewerMeta: $('#libViewerMeta'),
+    libViewerImg: $('#libViewerImg'),
+    libViewerPrev: $('#libViewerPrev'),
+    libViewerNext: $('#libViewerNext'),
+    libViewerThumbs: $('#libViewerThumbs'),
+    libViewerClose: $('#libViewerClose'),
+    libViewerFolder: $('#libViewerFolder'),
+    libViewerPixiv: $('#libViewerPixiv'),
+    libViewerCounter: $('#libViewerCounter'),
+    libViewerTags: $('#libViewerTags'),
     keyDialog: $('#keyDialog'),
     keyDialogClose: $('#keyDialogClose'),
     extractOpenBtn: $('#extractOpenBtn'),
@@ -179,6 +210,16 @@
     nextBusy: false,
     tagCursor: '',
     itemsMode: 'tag',
+    library: {
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 60,
+      loading: false,
+      viewer: null,
+      page: 0,
+      timer: null,
+    },
     tags: [],
     ids: [],
     items: [],
@@ -939,6 +980,304 @@
   function openHistoryFolder() {
     const session = state.history.session;
     if (session) openScanSubdir(`AI元数据扫描/${session}`);
+  }
+
+  /* ── 下载库 ─────────────────────────────────────── */
+
+  function librarySourceLabel(source) {
+    return { download: '普通下载', scan: 'AI 扫描', hit: '命中隔离' }[source] || source;
+  }
+
+  function libraryGroupTitle(item, group) {
+    if (group === 'author') return item.author?.name || '未知作者';
+    if (group === 'tag') return item.tags?.[0] || '未分类';
+    if (group === 'month') return (item.downloaded_at || '').slice(0, 7) || '未知月份';
+    if (group === 'source') return librarySourceLabel(item.source);
+    if (group === 'hit') return item.hit ? '元数据命中' : '未命中';
+    if (group === 'type') return item.type === 'manga' ? '漫画' : '插画';
+    return '全部作品';
+  }
+
+  function populateLibrarySelect(select, values, placeholder) {
+    if (!select) return;
+    const current = select.value;
+    select.textContent = '';
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = placeholder;
+    select.appendChild(empty);
+    values.forEach((entry) => {
+      const name = typeof entry === 'string' ? entry : entry.name;
+      const count = typeof entry === 'string' ? null : entry.count;
+      if (!name) return;
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = count != null ? `${name}（${count}）` : name;
+      select.appendChild(option);
+    });
+    if (Array.from(select.options).some((option) => option.value === current)) {
+      select.value = current;
+    }
+  }
+
+  function renderLibraryFacets(facets) {
+    const tags = facets?.tags || [];
+    const authors = facets?.authors || [];
+    const sessions = Object.keys(facets?.sessions || {});
+    populateLibrarySelect(els.libTag, tags, '全部标签');
+    populateLibrarySelect(els.libAuthor, authors, '全部作者');
+    populateLibrarySelect(els.libSession, sessions, '全部会话');
+  }
+
+  function libraryQueryParams(force = false) {
+    const params = new URLSearchParams();
+    const values = {
+      q: els.libSearch.value.trim(),
+      source: els.libSource.value,
+      type: els.libType.value,
+      r18: els.libR18.value,
+      hit: els.libHit.value,
+      tag: els.libTag.value,
+      author: els.libAuthor.value,
+      session: els.libSession.value,
+      sort: els.libSort.value,
+      offset: String(state.library.offset),
+      limit: String(state.library.limit),
+    };
+    Object.entries(values).forEach(([key, value]) => {
+      if (value && value !== 'all') params.set(key, value);
+    });
+    if (force) params.set('refresh', '1');
+    return params;
+  }
+
+  async function loadLibrary(reset = false, force = false) {
+    if (state.library.loading) return;
+    state.library.loading = true;
+    if (reset) state.library.offset = 0;
+    els.libSummary.textContent = '读取中…';
+    els.libMore.disabled = true;
+    try {
+      const data = await api(`/api/library?${libraryQueryParams(force).toString()}`);
+      const incoming = Array.isArray(data.items) ? data.items : [];
+      if (reset) {
+        state.library.items = incoming;
+      } else {
+        const existing = new Set(state.library.items.map((item) => `${item.dir}:${item.id}`));
+        state.library.items = state.library.items.concat(
+          incoming.filter((item) => !existing.has(`${item.dir}:${item.id}`)),
+        );
+      }
+      state.library.total = Number(data.total) || 0;
+      state.library.offset = state.library.items.length;
+      renderLibraryFacets(data.facets || {});
+      renderLibrary();
+    } catch (err) {
+      els.libSummary.textContent = `读取失败：${err.message}`;
+    } finally {
+      state.library.loading = false;
+      els.libMore.disabled = false;
+    }
+  }
+
+  function renderLibrary() {
+    const items = state.library.items;
+    const total = state.library.total;
+    const hits = items.filter((item) => item.hit).length;
+    const downloaded = items.filter((item) => item.source === 'download').length;
+    const scanned = items.filter((item) => item.source === 'scan').length;
+    const bytes = items.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0);
+    els.libSummary.textContent = total
+      ? `共 ${total} 个作品 · 已加载 ${items.length} 个`
+      : '没有找到作品';
+    els.libStats.textContent = items.length
+      ? `命中 ${hits} · 普通下载 ${downloaded} · 扫描 ${scanned} · 合计 ${humanBytes(bytes)}`
+      : '';
+    els.libGroups.textContent = '';
+
+    if (!items.length) {
+      els.libEmpty.hidden = false;
+      els.libEmpty.textContent = total === 0 && !els.libSearch.value.trim()
+        ? '下载库里还没有作品，先去抓取并下载一些吧。'
+        : '没有符合当前筛选条件的作品。';
+      els.libMore.hidden = true;
+      return;
+    }
+    els.libEmpty.hidden = true;
+
+    const groupMode = els.libGroup.value;
+    const groups = new Map();
+    items.forEach((item) => {
+      const key = groupMode === 'none' ? '全部作品' : libraryGroupTitle(item, groupMode);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    });
+
+    groups.forEach((groupItems, title) => {
+      const section = document.createElement('section');
+      section.className = 'library-group';
+      const heading = document.createElement('h3');
+      heading.className = 'library-group-title';
+      heading.textContent = title;
+      const count = document.createElement('span');
+      count.className = 'hint';
+      count.textContent = `${groupItems.length} 个`;
+      heading.appendChild(count);
+      const grid = document.createElement('div');
+      grid.className = 'library-grid';
+      groupItems.forEach((item) => grid.appendChild(createLibraryCard(item)));
+      section.append(heading, grid);
+      els.libGroups.appendChild(section);
+    });
+    els.libMore.hidden = items.length >= total;
+  }
+
+  function createLibraryCard(item) {
+    const card = document.createElement('article');
+    card.className = 'library-card';
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `查看 ${item.title}`);
+    const cover = document.createElement('div');
+    cover.className = 'library-card-cover';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = '';
+    img.src = item.cover || '';
+    cover.appendChild(img);
+
+    const badges = document.createElement('div');
+    badges.className = 'library-card-badges';
+    const source = document.createElement('span');
+    source.className = 'library-badge';
+    source.textContent = librarySourceLabel(item.source);
+    badges.appendChild(source);
+    if (item.hit) {
+      const hit = document.createElement('span');
+      hit.className = 'library-badge is-hit';
+      hit.textContent = '命中';
+      badges.appendChild(hit);
+    }
+    if (item.x_restrict > 0) {
+      const r18 = document.createElement('span');
+      r18.className = 'library-badge is-r18';
+      r18.textContent = 'R-18';
+      badges.appendChild(r18);
+    }
+    cover.appendChild(badges);
+
+    const body = document.createElement('div');
+    body.className = 'library-card-body';
+    const title = document.createElement('div');
+    title.className = 'library-card-title';
+    title.textContent = item.title || `作品 ${item.id}`;
+    const sub = document.createElement('div');
+    sub.className = 'library-card-sub';
+    sub.textContent = `${item.author?.name || '未知作者'} · ${item.page_count || item.images.length} 页`;
+    const tags = document.createElement('div');
+    tags.className = 'library-card-tags';
+    (item.tags || []).slice(0, 3).forEach((tag) => {
+      const chip = document.createElement('span');
+      chip.textContent = tag;
+      tags.appendChild(chip);
+    });
+    body.append(title, sub, tags);
+    card.append(cover, body);
+    card.addEventListener('click', () => openLibraryViewer(item));
+    card.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        openLibraryViewer(item);
+      }
+    });
+    return card;
+  }
+
+  function openLibraryViewer(item) {
+    if (!item || !Array.isArray(item.images) || !item.images.length) return;
+    state.library.viewer = item;
+    state.library.page = 0;
+    els.libViewer.hidden = false;
+    els.libViewerTitle.textContent = item.title || `作品 ${item.id}`;
+    els.libViewerMeta.textContent = `${item.author?.name || '未知作者'} · ${librarySourceLabel(item.source)} · ${item.images.length} 页`;
+    els.libViewerTags.textContent = (item.tags || []).slice(0, 8).join(' · ');
+    renderLibraryViewerThumbs();
+    showLibraryPage(0);
+  }
+
+  function closeLibraryViewer() {
+    els.libViewer.hidden = true;
+    els.libViewerImg.removeAttribute('src');
+    els.libViewerThumbs.textContent = '';
+    state.library.viewer = null;
+  }
+
+  function renderLibraryViewerThumbs() {
+    const item = state.library.viewer;
+    if (!item) return;
+    els.libViewerThumbs.textContent = '';
+    item.images.forEach((image, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.setAttribute('aria-label', `第 ${index + 1} 页`);
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = '';
+      img.src = image.thumb || image.url;
+      button.appendChild(img);
+      button.addEventListener('click', () => showLibraryPage(index));
+      els.libViewerThumbs.appendChild(button);
+    });
+  }
+
+  function showLibraryPage(index) {
+    const item = state.library.viewer;
+    if (!item) return;
+    const page = Math.max(0, Math.min(index, item.images.length - 1));
+    state.library.page = page;
+    els.libViewerImg.src = item.images[page].url;
+    els.libViewerCounter.textContent = `${page + 1} / ${item.images.length}`;
+    els.libViewerPrev.disabled = page <= 0;
+    els.libViewerNext.disabled = page >= item.images.length - 1;
+    Array.from(els.libViewerThumbs.children).forEach((button, i) => {
+      button.classList.toggle('is-active', i === page);
+    });
+    const active = els.libViewerThumbs.children[page];
+    if (active && active.scrollIntoView) {
+      active.scrollIntoView({ block: 'nearest', inline: 'center' });
+    }
+  }
+
+  function openLibraryFolder() {
+    const item = state.library.viewer;
+    if (!item) return;
+    api('/api/open-output', { method: 'POST', body: { subdir: item.dir } }).catch((err) => {
+      showToast(err.message, 'error');
+    });
+  }
+
+  function openLibraryPixiv() {
+    const item = state.library.viewer;
+    if (!item) return;
+    window.open(`https://www.pixiv.net/artworks/${item.id}`, '_blank');
+  }
+
+  function openLibraryDialog() {
+    closeLibraryViewer();
+    if (typeof els.libraryDialog.showModal === 'function') els.libraryDialog.showModal();
+    else els.libraryDialog.setAttribute('open', '');
+    loadLibrary(true, true);
+    els.libSearch.focus();
+  }
+
+  function closeLibraryDialog() {
+    closeLibraryViewer();
+    clearTimeout(state.library.timer);
+    try {
+      els.libraryDialog.close();
+    } catch {
+      els.libraryDialog.removeAttribute('open');
+    }
   }
 
   /* ── 网络与设置 ─────────────────────────────────── */
@@ -3076,6 +3415,40 @@
     els.connectBtn.addEventListener('click', connect);
     els.extractKeyBtn.addEventListener('click', openExtractDialog);
     els.autoLoginBtn.addEventListener('click', startAutoLogin);
+    els.libraryBtn.addEventListener('click', openLibraryDialog);
+    els.libraryClose.addEventListener('click', closeLibraryDialog);
+    els.libraryDialog.addEventListener('click', (ev) => {
+      if (ev.target === els.libraryDialog) closeLibraryDialog();
+    });
+    els.libSearch.addEventListener('input', () => {
+      clearTimeout(state.library.timer);
+      state.library.timer = setTimeout(() => loadLibrary(true), 350);
+    });
+    [els.libSource, els.libType, els.libR18, els.libHit, els.libTag, els.libAuthor, els.libSession, els.libSort].forEach((select) => {
+      select.addEventListener('change', () => loadLibrary(true));
+    });
+    els.libGroup.addEventListener('change', renderLibrary);
+    els.libRefresh.addEventListener('click', () => loadLibrary(true, true));
+    els.libMore.addEventListener('click', () => loadLibrary(false));
+    els.libViewerClose.addEventListener('click', closeLibraryViewer);
+    els.libViewerPrev.addEventListener('click', () => showLibraryPage(state.library.page - 1));
+    els.libViewerNext.addEventListener('click', () => showLibraryPage(state.library.page + 1));
+    els.libViewerFolder.addEventListener('click', openLibraryFolder);
+    els.libViewerPixiv.addEventListener('click', openLibraryPixiv);
+    document.addEventListener('keydown', (ev) => {
+      if (els.libViewer.hidden) return;
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        closeLibraryViewer();
+      } else if (ev.key === 'ArrowLeft') {
+        ev.preventDefault();
+        showLibraryPage(state.library.page - 1);
+      } else if (ev.key === 'ArrowRight') {
+        ev.preventDefault();
+        showLibraryPage(state.library.page + 1);
+      }
+    });
     els.networkBtn.addEventListener('click', openSettingsDialog);
     els.settingsClose.addEventListener('click', closeSettingsDialog);
     els.settingsDialog.addEventListener('click', (ev) => {
